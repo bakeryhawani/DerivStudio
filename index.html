@@ -327,7 +327,7 @@
         ws.send(JSON.stringify({
           proposal: 1, amount: stake, basis: 'stake', 
           contract_type: 'DIGITDIFF', currency: 'USD', 
-          duration: dynamicDuration, duration_unit: 't', 
+          duration: dynamicDuration, duration_unit: 1, 
           symbol: symbol, barrier: String(barrier)
         }));
       }
