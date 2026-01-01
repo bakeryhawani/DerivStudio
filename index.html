@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Deriv AI - Dual-Head Neural Trader</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+  <style>
+    body { font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 1.2rem; display: flex; flex-direction: column; align-items: center; }
+    .panel { width: 100%; max-width: 1000px; background: #161b22; border-radius: 12px; padding: 1.2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin-bottom: 1rem; border: 1px solid #30363d; }
+    .ai-panel { border-top: 4px solid #8b5cf6; background: #1c2128; }
+    h1 { color: #58a6ff; font-size: 1.4rem; margin-top: 0; }
+    .row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 0.8rem; }
+    label { min-width: 120px; color: #8b9eb7; font-size: 0.9rem; font-weight: 600; }
+    input, button { background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.9rem; }
+    button { cursor: pointer; background: #238636; color: white; border: none; transition: 0.2s; font-weight: bold; }
+    button:hover { background: #2ea043; transform: translateY(-1px); }
+    .stop-btn { background: #da3633; }
+    .status-bar { display: flex; gap: 1.5rem; background: #0d1117; padding: 0.8rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid #30363d; }
+    .stat-item { display: flex; flex-direction: column; }
+    .stat-label { font-size: 0.75rem; color: #8b9eb7; text-transform: uppercase; }
+    .stat-value { font-size: 1.1rem; font-weight: bold; }
+    .digits-display { font-family: monospace; font-size: 1rem; padding: 0.8rem; background: #071018; border-radius: 6px; margin-bottom: 1rem; border: 1px solid #30363d; overflow-x: auto; white-space: nowrap; }
+    .digits-display .newest { color: #58a6ff; font-weight: bold; border-bottom: 2px solid #58a6ff; }
+    .log-container { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; height: 350px; }
+    .log-box { background: #071018; border-radius: 6px; border: 1px solid #30363d; padding: 0.6rem; overflow-y: auto; font-size: 0.8rem; font-family: 'Consolas', monospace; display: flex; flex-direction: column-reverse; }
+    .log-title { font-size: 0.7rem; color: #8b9eb7; margin-bottom: 4px; text-transform: uppercase; }
+    .log-entry { margin-bottom: 2px; border-bottom: 1px solid #161b22; padding-bottom: 2px; }
+    .trade-entry { color: #d2a8ff; font-weight: bold; }
+    .win { color: #3fb950; }
+    .loss { color: #f85149; }
+    .warning { color: #e3b341; font-style: italic; }
+    .prediction-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin-top: 10px; height: 60px; align-items: flex-end; }
+    .bar-wrapper { display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+    .bar { width: 100%; background: #30363d; border-radius: 2px 2px 0 0; transition: height 0.3s ease; position: relative; }
+    .bar-val { font-size: 0.6rem; margin-bottom: 2px; }
+    .bar-num { font-size: 0.75rem; font-weight: bold; margin-top: 4px; }
+    .danger { background: #f85149 !important; }
+    .safe { background: #58a6ff; }
+    .badge { padding: 2px 5px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; margin-left: 5px; background: #30363d; }
+  </style>
+</head>
+<body>
+
+  <h1>Deriv AI Multi-Duration (1-10 Ticks)</h1>
+
+  <div class="panel">
+    <div class="row">
+      <div class="stat-item">
+        <label>API Token</label>
+        <input id="token" type="password" placeholder="Paste Deriv Token" style="width: 200px;" />
+      </div>
+      <div class="stat-item">
+        <label>Symbol</label>
+        <input id="symbol" type="text" value="R_100" style="width: 80px;" />
+      </div>
+      <div style="margin-top: 18px;">
+        <button id="startBtn">START BOT</button>
+        <button id="stopBtn" class="stop-btn">STOP</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="stat-item">
+        <label>Base Stake ($)</label>
+        <input id="baseStake" type="number" step="0.1" value="1.00" style="width: 80px;"/>
+      </div>
+      <div class="stat-item">
+        <label>Martingale ($)</label>
+        <input id="martingaleStake" type="number" step="0.1" value="13.00" style="width: 80px;"/>
+      </div>
+      <div class="stat-item">
+        <label>AI Risk Threshold %</label>
+        <input id="aiThreshold" type="number" value="15" style="width: 60px;"/>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel ai-panel">
+    <div class="status-bar">
+      <div class="stat-item">
+        <span class="stat-label">Total P/L</span>
+        <span id="pl" class="stat-value">0.00</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">AI Calculated Duration</span>
+        <span id="durText" class="stat-value" style="color: #d2a8ff;">-</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Wins / Losses</span>
+        <span class="stat-value"><span id="won" class="win">0</span> / <span id="lost" class="loss">0</span></span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Next Required Barrier</span>
+        <span id="nextBarrierReq" class="stat-value" style="color: #e3b341;">ANY</span>
+      </div>
+    </div>
+    <div class="log-title">NN Probability (Digit Prediction)</div>
+    <div class="prediction-grid" id="predictionVis"></div>
+  </div>
+
+  <div class="panel">
+    <div class="log-title">Latest Digits History (Lookback 25)</div>
+    <div class="digits-display" id="digitsArea">...waiting for ticks...</div>
+
+    <div class="log-container">
+      <div>
+        <div class="log-title">Ticks Stream</div>
+        <div id="tickLog" class="log-box"></div>
+      </div>
+      <div>
+        <div class="log-title">Trade Execution & Neural Logic</div>
+        <div id="tradeLog" class="log-box"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let ws, running = false, token, pl = 0, wins = 0, losses = 0, digits = [];
+    let hasOpenContract = false, martingalePending = false;
+    let lastLostBarrier = null;
+    let lastUsedDuration = 0; 
+    let symbol = '1HZ100V', baseStake = 1.0, martingaleStake = 13.0;
+    
+    let model;
+    let aiPredictions = new Array(10).fill(0.1);
+    let aiDurationConfidence = new Array(10).fill(0.1);
+    const LOOKBACK = 25;
+
+    function logTick(msg) {
+      const el = document.getElementById('tickLog');
+      el.innerHTML = `<div class="log-entry">[${new Date().toLocaleTimeString()}] ${msg}</div>` + el.innerHTML;
+      if (el.childNodes.length > 20) el.removeChild(el.lastChild);
+    }
+
+    function logTrade(msg, className = '') {
+      const el = document.getElementById('tradeLog');
+      el.innerHTML = `<div class="log-entry trade-entry ${className}">[${new Date().toLocaleTimeString()}] ${msg}</div>` + el.innerHTML;
+    }
+
+    // Initialize Dual-Head Neural Network
+    async function initAI() {
+      const input = tf.input({shape: [LOOKBACK]});
+      
+      // Shared Layers
+      const shared = tf.layers.dense({units: 64, activation: 'relu'}).apply(input);
+      const shared2 = tf.layers.dense({units: 32, activation: 'relu'}).apply(shared);
+      
+      // Head 1: Digit Prediction (0-9)
+      const digitHead = tf.layers.dense({units: 10, activation: 'softmax', name: 'digit_output'}).apply(shared2);
+      
+      // Head 2: Duration Prediction (1-10 ticks)
+      const durationHead = tf.layers.dense({units: 10, activation: 'softmax', name: 'duration_output'}).apply(shared2);
+
+      model = tf.model({inputs: input, outputs: [digitHead, durationHead]});
+      model.compile({
+        optimizer: 'adam',
+        loss: {digit_output: 'categoricalCrossentropy', duration_output: 'categoricalCrossentropy'}
+      });
+      updatePredictionUI();
+    }
+
+    async function trainAI() {
+      if (digits.length < LOOKBACK + 15) return;
+      
+      const inputs = []; 
+      const digitLabels = [];
+      const durationLabels = [];
+
+      const dataSize = Math.min(digits.length - LOOKBACK - 11, 200);
+      
+      for (let i = 0; i < dataSize; i++) {
+        const sequence = digits.slice(i + 1, i + 1 + LOOKBACK).map(Number);
+        const actualNextDigit = parseInt(digits[i]);
+        
+        // Find optimal duration (where digit did NOT repeat)
+        let bestDur = 1;
+        for(let d=1; d<=10; d++) {
+          if (parseInt(digits[i+d]) !== actualNextDigit) {
+            bestDur = d;
+          }
+        }
+
+        inputs.push(sequence);
+        digitLabels.push(tf.oneHot(actualNextDigit, 10).dataSync());
+        durationLabels.push(tf.oneHot(bestDur - 1, 10).dataSync());
+      }
+
+      const xs = tf.tensor2d(inputs);
+      const ysDigit = tf.tensor2d(digitLabels);
+      const ysDuration = tf.tensor2d(durationLabels);
+
+      await model.fit(xs, {digit_output: ysDigit, duration_output: ysDuration}, { epochs: 1, verbose: 0 });
+      
+      xs.dispose(); ysDigit.dispose(); ysDuration.dispose();
+    }
+
+    async function getAIPredictions() {
+      if (digits.length < LOOKBACK) return;
+      
+      const inputTensor = tf.tensor2d([digits.slice(0, LOOKBACK).map(Number)]);
+      const [predDigit, predDur] = model.predict(inputTensor);
+      
+      aiPredictions = Array.from(await predDigit.data());
+      aiDurationConfidence = Array.from(await predDur.data());
+      
+      inputTensor.dispose(); predDigit.dispose(); predDur.dispose();
+      updatePredictionUI();
+    }
+
+    function calculateDynamicDuration() {
+      // Logic: Get sorted list of durations (1-10) based on AI confidence
+      let choices = aiDurationConfidence
+        .map((prob, idx) => ({ duration: idx + 1, prob }))
+        .sort((a, b) => b.prob - a.prob);
+
+      // Requirement: Do not use the same duration as the previous trade
+      let selected = choices[0].duration;
+      if (selected === lastUsedDuration) {
+        selected = choices[1].duration; // Pick second best AI choice
+      }
+      return selected;
+    }
+
+    function updatePredictionUI() {
+      const container = document.getElementById('predictionVis');
+      container.innerHTML = '';
+      const threshold = (parseFloat(document.getElementById('aiThreshold').value) || 15) / 100;
+      
+      aiPredictions.forEach((prob, i) => {
+        const height = (prob * 100).toFixed(0);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'bar-wrapper';
+        const bar = document.createElement('div');
+        bar.className = `bar ${prob > threshold ? 'danger' : 'safe'}`;
+        bar.style.height = `${Math.max(height, 5)}%`;
+        bar.innerHTML = `<div class="bar-val" style="position:absolute; top:-12px; width:100%; text-align:center;">${height}%</div>`;
+        const num = document.createElement('div');
+        num.className = 'bar-num'; num.textContent = i;
+        wrapper.appendChild(bar); wrapper.appendChild(num);
+        container.appendChild(wrapper);
+      });
+
+      const nextDur = calculateDynamicDuration();
+      document.getElementById('durText').textContent = nextDur + " Ticks";
+    }
+
+    function connect() {
+      ws = new WebSocket('wss://ws.binaryws.com/websockets/v3?app_id=1089');
+      ws.onopen = () => ws.send(JSON.stringify({ authorize: token }));
+
+      ws.onmessage = async (evt) => {
+        const data = JSON.parse(evt.data);
+
+        if (data.msg_type === 'authorize') {
+          if (data.error) return logTrade("Auth Error: " + data.error.message, 'loss');
+          ws.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
+          logTrade("Connected. Training Neural Net...");
+        }
+
+        if (data.msg_type === 'tick') {
+          const lastDigit = data.tick.quote.toString().slice(-1);
+          logTick(`Price: ${data.tick.quote} → [${lastDigit}]`);
+          digits.unshift(lastDigit);
+          if (digits.length > 300) digits.pop();
+          updateDigitsDisplay();
+          
+          if (digits.length > LOOKBACK) {
+            await getAIPredictions();
+            if (digits.length % 3 === 0) trainAI();
+            evaluateTrade(lastDigit);
+          }
+        }
+
+        if (data.msg_type === 'proposal') {
+          if (data.error) { hasOpenContract = false; return; }
+          ws.send(JSON.stringify({ buy: data.proposal.id, price: data.proposal.ask_price }));
+        }
+
+        if (data.msg_type === 'buy') {
+          ws.send(JSON.stringify({ proposal_open_contract: 1, contract_id: data.buy.contract_id, subscribe: 1 }));
+        }
+
+        if (data.msg_type === 'proposal_open_contract') {
+          const poc = data.proposal_open_contract;
+          if (poc.is_expired) {
+            const profit = parseFloat(poc.profit);
+            pl += profit;
+            if (profit > 0) {
+              wins++; martingalePending = false; lastLostBarrier = null;
+              logTrade(`WIN: +$${profit.toFixed(2)} (Dur: ${poc.duration}t)`, 'win');
+            } else {
+              losses++; martingalePending = true; lastLostBarrier = parseInt(poc.barrier);
+              logTrade(`LOSS: -$${Math.abs(profit).toFixed(2)} (Dur: ${poc.duration}t)`, 'loss');
+            }
+            hasOpenContract = false;
+            updateStatsUI();
+          }
+        }
+      };
+    }
+
+    function evaluateTrade(latestDigit) {
+      if (hasOpenContract || !running) return;
+
+      let barrier = null;
+      if (latestDigit === '8') barrier = 1;
+      else if (latestDigit === '2') barrier = 5;
+
+      if (barrier !== null) {
+        // Martingale Alternating Logic
+        if (martingalePending && barrier === lastLostBarrier) return;
+
+        // AI Digit Risk Check
+        const threshold = (parseFloat(document.getElementById('aiThreshold').value) || 15) / 100;
+        if (aiPredictions[barrier] > threshold) return;
+
+        // NN Duration Calculation (1-10)
+        const dynamicDuration = calculateDynamicDuration();
+        
+        const stake = martingalePending ? martingaleStake : baseStake;
+        hasOpenContract = true;
+        lastUsedDuration = dynamicDuration;
+        
+        logTrade(`EXECUTE: Barrier ${barrier} | Stake $${stake} | Duration: ${dynamicDuration}t`);
+        
+        ws.send(JSON.stringify({
+          proposal: 1, amount: stake, basis: 'stake', 
+          contract_type: 'DIGITDIFF', currency: 'USD', 
+          duration: dynamicDuration, duration_unit: 't', 
+          symbol: symbol, barrier: String(barrier)
+        }));
+      }
+    }
+
+    function updateDigitsDisplay() {
+      const area = document.getElementById('digitsArea');
+      area.innerHTML = digits.slice(0, 25).map((d, i) => 
+        `<span class="${i === 0 ? 'newest' : ''}">${d}</span>`
+      ).join(' ');
+    }
+
+    function updateStatsUI() {
+      const plEl = document.getElementById('pl');
+      plEl.textContent = pl.toFixed(2);
+      plEl.style.color = pl >= 0 ? '#3fb950' : '#f85149';
+      document.getElementById('won').textContent = wins;
+      document.getElementById('lost').textContent = losses;
+      
+      const reqEl = document.getElementById('nextBarrierReq');
+      if (!martingalePending) {
+        reqEl.textContent = "ANY (1/5)";
+        reqEl.style.color = "#8b5cf6";
+      } else {
+        reqEl.textContent = lastLostBarrier === 1 ? "MUST BE 5" : "MUST BE 1";
+        reqEl.style.color = "#e3b341";
+      }
+    }
+
+    document.getElementById('startBtn').onclick = () => {
+      token = document.getElementById('token').value.trim();
+      if (!token) return alert("Enter API Token");
+      baseStake = parseFloat(document.getElementById('baseStake').value);
+      martingaleStake = parseFloat(document.getElementById('martingaleStake').value);
+      running = true;
+      initAI();
+      connect();
+      logTrade("AI Bot Started - Analyzing Ticks...");
+    };
+
+    document.getElementById('stopBtn').onclick = () => {
+      running = false;
+      if (ws) ws.close();
+      logTrade("Bot Stopped.", 'loss');
+    };
+  </script>
+</body>
+</html>
